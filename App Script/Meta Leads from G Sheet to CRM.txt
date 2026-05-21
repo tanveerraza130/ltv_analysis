@@ -1,0 +1,110 @@
+function sendNewLeads() {
+
+  var sheet = SpreadsheetApp.getActiveSpreadsheet()
+    .getSheetByName("Sheet1");
+
+  var lastRow = sheet.getLastRow();
+
+  var data = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getValues();
+
+  for (var i = 0; i < data.length; i++) {
+
+    var row = i + 2;
+
+    var status = data[i][20]; // Column U (EForce Lead Status)
+    var id = data[i][0];
+
+    // ✅ ONLY NEW ROWS (very important)
+    if (!id || status === "SENT" || status === "FAILED" || status === "INVALID") {
+      continue;
+    }
+
+    // ✅ Clean ID (remove only "l:")
+    var cleanId = id.toString().replace(/^l:/, "");
+
+    var payload = {
+      id: cleanId,
+      created_time: data[i][1],
+      ad_id: data[i][2],
+      ad_name: data[i][3],
+      adset_id: data[i][4],
+      adset_name: data[i][5],
+      campaign_id: data[i][6],
+      campaign_name: data[i][7],
+      form_id: data[i][8],
+      form_name: data[i][9],
+      is_organic: data[i][10],
+      platform: data[i][11],
+      occasion: data[i][12],
+      price_range: data[i][13],
+      category: data[i][14],
+      preferred_time: data[i][15],
+      full_name: data[i][16],   // Column Q
+      mobile: cleanPhone(data[i][17]),
+      email: data[i][18]
+    };
+
+    // ❌ Invalid phone
+    if (!payload.mobile || payload.mobile.length !== 10) {
+      sheet.getRange(row, 21).setValue("INVALID");
+      continue;
+    }
+
+    try {
+
+      // 🔄 Mark processing (optional but safe)
+      sheet.getRange(row, 21).setValue("PROCESSING");
+
+      // 🔑 TOKEN
+      var tokenRes = UrlFetchApp.fetch(
+        "https://eforce.ethoswatches.com/api/users/generateToken",
+        {
+          method: "post",
+          contentType: "application/json",
+          payload: JSON.stringify({
+            email: "marketing_lead_api@ethoswatches.com",
+            password: "22Eah&7P!^#Q"
+          })
+        }
+      );
+
+      var token = JSON.parse(tokenRes.getContentText()).data.token;
+
+      // 🚀 SEND TO CRM
+      var leadRes = UrlFetchApp.fetch(
+        "https://eforce.ethoswatches.com/api/rest/createMessikaMarketingLead",
+        {
+          method: "post",
+          contentType: "application/json",
+          headers: {
+            "Authorization": token
+          },
+          payload: JSON.stringify(payload),
+          muteHttpExceptions: true
+        }
+      );
+
+      var response = leadRes.getContentText();
+      Logger.log("SUCCESS ROW " + row + ": " + response);
+
+      // ✅ Mark success
+      sheet.getRange(row, 21).setValue("SENT");
+
+    } catch (err) {
+
+      Logger.log("ERROR ROW " + row + ": " + err);
+
+      // ❌ Mark failed
+      sheet.getRange(row, 21).setValue("FAILED");
+    }
+  }
+}
+
+
+// 🔹 PHONE CLEAN
+function cleanPhone(phone) {
+  if (!phone) return "";
+  phone = phone.toString();
+  phone = phone.replace("p:", "").replace("+91", "").replace(/\D/g, "");
+  return phone.slice(-10);
+}
