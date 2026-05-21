@@ -1,0 +1,120 @@
+function refreshBigQueryTables() {
+
+  var projectId = "whatsappanalysis-487206";
+  var email = "tanveer.raza@ethoswatches.com";
+
+  var datasets = BigQuery.Datasets.list(projectId).datasets;
+
+  var html = "<h2>BigQuery Auto Refresh Report</h2>";
+  html += "<table border='1' cellpadding='6' style='border-collapse:collapse'>";
+  html += "<tr style='background:#f2f2f2'>";
+  html += "<th>Dataset</th>";
+  html += "<th>Table</th>";
+  html += "<th>Rows</th>";
+  html += "<th>Size MB</th>";
+  html += "<th>Status</th>";
+  html += "<th>Time</th>";
+  html += "</tr>";
+
+  var totalRows = 0;
+  var totalSize = 0;
+
+  datasets.forEach(function(ds){
+
+    var datasetId = ds.datasetReference.datasetId;
+    var tables = BigQuery.Tables.list(projectId, datasetId).tables;
+
+    if(!tables) return;
+
+    tables.forEach(function(tbl){
+
+      var tableId = tbl.tableReference.tableId;
+
+      var rowCount = 0;
+      var sizeMB = 0;
+      var status = "SUCCESS";
+
+      try {
+
+        var metaQuery = `
+        SELECT
+        row_count,
+        ROUND(size_bytes/1024/1024,2) AS size_mb
+        FROM \`${projectId}.${datasetId}.__TABLES__\`
+        WHERE table_id='${tableId}'
+        `;
+
+        var meta = BigQuery.Jobs.query({
+          query: metaQuery,
+          useLegacySql:false
+        }, projectId);
+
+        if(meta.rows){
+          rowCount = Number(meta.rows[0].f[0].v);
+          sizeMB = Number(meta.rows[0].f[1].v);
+        }
+
+      } catch(e){
+        status = "METADATA ERROR";
+      }
+
+      if(rowCount > 0){
+
+        try {
+
+          var refreshQuery = `
+          CREATE OR REPLACE TABLE \`${projectId}.${datasetId}.${tableId}\`
+          AS SELECT * FROM \`${projectId}.${datasetId}.${tableId}\`
+          `;
+
+          BigQuery.Jobs.query({
+            query: refreshQuery,
+            useLegacySql:false
+          }, projectId);
+
+          status = "SUCCESS";
+
+        } catch(e){
+
+          status = "FAILED";
+
+        }
+
+      } else {
+
+        status = "SKIPPED (0 ROWS)";
+
+      }
+
+      totalRows += rowCount;
+      totalSize += sizeMB;
+
+      html += "<tr>";
+      html += "<td>"+datasetId+"</td>";
+      html += "<td>"+tableId+"</td>";
+      html += "<td>"+rowCount+"</td>";
+      html += "<td>"+sizeMB.toFixed(2)+"</td>";
+      html += "<td>"+status+"</td>";
+      html += "<td>"+new Date()+"</td>";
+      html += "</tr>";
+
+    });
+
+  });
+
+  html += "<tr style='font-weight:bold;background:#f2f2f2'>";
+  html += "<td colspan='2'>GRAND TOTAL</td>";
+  html += "<td>"+totalRows+"</td>";
+  html += "<td>"+totalSize.toFixed(2)+"</td>";
+  html += "<td colspan='2'></td>";
+  html += "</tr>";
+
+  html += "</table>";
+
+  MailApp.sendEmail({
+    to: email,
+    subject: "BigQuery Table Refresh Report",
+    htmlBody: html
+  });
+
+}

@@ -1,0 +1,101 @@
+function uploadCleverTapEventsWithIdentity() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Charged");
+  const headerRow = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const data = sheet.getRange(2, 1, sheet.getLastRow() - 1, headerRow.length).getValues();
+
+  const url = "https://in1.api.clevertap.com/1/upload";
+  const headers = {
+    "X-CleverTap-Account-Id": "6K5-56W-8K7Z",
+    "X-CleverTap-Passcode": "WHO-JIE-CLEL",
+    "Content-Type": "application/json; charset=utf-8"
+  };
+
+  const now = Math.floor(Date.now() / 1000);
+  const batchSize = 500;
+
+  for (let i = 0; i < data.length; i += batchSize) {
+    const batch = data.slice(i, i + batchSize);
+    const payload = { d: [] };
+
+    batch.forEach(row => {
+      let identity = null;
+      let evtName = null;
+      let ts = null;
+      const evtData = {};
+
+      headerRow.forEach((colName, index) => {
+        const value = row[index];
+        if (value === "" || value === null) return;
+
+        const key = colName.trim().toLowerCase();
+
+        // ---- TOP LEVEL FIELDS ----
+        if (key === "identity") {
+          identity = String(value).trim();
+        } 
+        else if (key === "event_name") {
+          evtName = String(value).trim();
+        } 
+        else if (key === "ts") {
+          ts = parseInt(value, 10);
+
+          // 🚫 Block invalid / future timestamps
+          if (isNaN(ts) || ts > now) {
+            ts = now - 10;
+          }
+        } 
+        // ---- EVENT DATA ----
+        else {
+          const cleanKey = colName.trim();
+
+          // ✅ FORCE Items as ARRAY (Charged requirement)
+          if (cleanKey.toLowerCase() === "items") {
+            try {
+              evtData.Items =
+                typeof value === "string" ? JSON.parse(value) : value;
+            } catch (e) {
+              Logger.log("❌ Invalid Items JSON for identity: " + identity);
+              evtData.Items = [];
+            }
+          } else {
+            evtData[cleanKey] = value;
+          }
+        }
+      });
+
+      // ---- HARD VALIDATION ----
+      if (
+        identity &&
+        evtName &&
+        ts &&
+        Array.isArray(evtData.Items)
+      ) {
+        payload.d.push({
+          identity: identity,
+          type: "event",
+          evtName: evtName,
+          ts: ts,
+          evtData: evtData
+        });
+      }
+    });
+
+    if (payload.d.length === 0) {
+      Logger.log("⚠️ No valid events in this batch");
+      continue;
+    }
+
+    Logger.log("📤 FINAL PAYLOAD:\n" + JSON.stringify(payload, null, 2));
+
+    const response = UrlFetchApp.fetch(url, {
+      method: "post",
+      headers: headers,
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    });
+
+    Logger.log("📬 CLEVERTAP RESPONSE:\n" + response.getContentText());
+
+    Utilities.sleep(500); // rate-limit safety
+  }
+}
